@@ -1,8 +1,14 @@
 import numpy as np
+rng = np.random.default_rng()
 import matplotlib
 import matplotlib.pyplot as plt
 
 from geneticAlgorithm import *
+
+# to do:
+# normalise graph costs
+# scale penalty for invalid solutions in some way
+# smart crossover process - increase chance to split at expensive paths
 
 class TravellingSalespersonGA(GeneticAlgorithm):
     """
@@ -51,6 +57,7 @@ class TravellingSalespersonGA(GeneticAlgorithm):
             elitism,
             mutation,
             mutationRate,
+            permitInvalidSolutions,
             graph,
             ):
         # store problem graph and various attributes of it
@@ -67,6 +74,7 @@ class TravellingSalespersonGA(GeneticAlgorithm):
             elitism,
             mutation,
             mutationRate,
+            permitInvalidSolutions,
             )
 
     def initPop(self):
@@ -122,7 +130,7 @@ class TravellingSalespersonGA(GeneticAlgorithm):
         if not self.computeValid(solution):
             cost += self.computePenalty(solution)
         # return solution fitness as reciprocal of cost
-        return 1/cost
+        return 1/(cost**2)
 
     def computeValid(self, solution):
         """
@@ -193,9 +201,6 @@ class TravellingSalespersonGA(GeneticAlgorithm):
             A new solution
         """
 
-        # initialise both children as copies of parent1
-        child1 = parent1.copy()
-        child2 = parent1.copy()
         # selects number of crossover points if random, from between 1 and 1
         # less than number of locations in solution
         if self.crossoverPoints == 'random':
@@ -206,24 +211,49 @@ class TravellingSalespersonGA(GeneticAlgorithm):
         # compute step size from number of sections into which solutions
         # are divided
         stepSize = int(parent1.shape[0] / numSections)
-        # iterate over sections of solutions
-        for section in range(numSections):
-            # if section number is even, replace section in child2 with
-            # section from parent2
-            if section % 2 == 0:
-                child2[section*stepSize:(section+1)*stepSize] =\
-                    parent2[section*stepSize:(section+1)*stepSize]
-            # if section number is odd, replace section in child1 with
-            # section from parent2
-            else:
-                child1[section*stepSize:(section+1)*stepSize] =\
-                    parent2[section*stepSize:(section+1)*stepSize]
+
+        if self.permitInvalidSolutions:
+            # initialise both children as copies of parent1
+            child1 = parent1.copy()
+            child2 = parent1.copy()
+            # iterate over sections of solutions
+            for section in range(numSections):
+                # if section number is even, replace section in child2 with
+                # section from parent2
+                if section % 2 == 0:
+                    child2[section*stepSize:(section+1)*stepSize] =\
+                        parent2[section*stepSize:(section+1)*stepSize]
+                # if section number is odd, replace section in child1 with
+                # section from parent2
+                else:
+                    child1[section*stepSize:(section+1)*stepSize] =\
+                        parent2[section*stepSize:(section+1)*stepSize]
+
+        else:
+            # initialise children as invalid solutions filled with -1s
+            child1 = np.ones_like(parent1) * -1
+            child2 = child1.copy()
+            # iterate over solution indices
+            for locIdx in range(parent1.shape[0]):
+                # for even numbered sections, use parent1 for child1
+                if (locIdx // stepSize) % 2 == 0:
+                    child1[locIdx] = parent1[locIdx]
+                # for odd, use parent1 for child2
+                else:
+                    child2[locIdx] = parent1[locIdx]
+            # fill gaps with remaining locations from parent2
+            child1[np.arange(child1.shape[0])[child1==-1]] =\
+                parent2[np.isin(parent2, child1, invert=True)]
+            child2[np.arange(child2.shape[0])[child2==-1]] =\
+                parent2[np.isin(parent2, child2, invert=True)]
+        # append start location to end
+        child1 = np.append(child1, child1[0])
+        child2 = np.append(child2, child2[0])
         return child1, child2
 
     def performMutation(self, solution):
         """
-        Mutates solution by randomly selecting one of the locations
-        and randomly switching it to another (or the same) location
+        Mutates solution randomly
 
         Parameters
         ----------
@@ -238,11 +268,23 @@ class TravellingSalespersonGA(GeneticAlgorithm):
             path through the problem graph
         """
 
-        # select index of location to change
-        idx = self.rng.choice(solution.shape[0])
-        # randomly select new location
-        solution[idx] = self.rng.choice(solution.shape[0]-1)
+        if self.permitInvalidSolutions:
+            # select index of location to change
+            idx = self.rng.choice(solution.shape[0])
+            # randomly select new location
+            solution[idx] = self.rng.choice(solution.shape[0]-1)
+
+        else:
+            # select 2 location indices to swap, ensure they are different
+            idx1 = self.rng.choice(solution.shape[0])
+            idx2 = self.rng.choice(solution.shape[0])
+            while idx1 == idx2:
+                idx2 = self.rng.choice(solution.shape[0])
+            solution[idx1], solution[idx2] = solution[idx2], solution[idx1]
+        # append start location to end
+        solution = np.append(solution, solution[0])
         return solution
+
 
 def makeGraph(nodes, maxCost, directed=False):
     """
@@ -266,7 +308,6 @@ def makeGraph(nodes, maxCost, directed=False):
         from location x to location y
     """
 
-    rng = np.random.default_rng()
     # initialise graph with 0 costs
     graph = np.zeros((nodes, nodes))
     # iterate over row indices
@@ -288,138 +329,42 @@ def makeGraph(nodes, maxCost, directed=False):
         graph += graph.T
     return graph
 
-if __name__ == '__main__':
+def makeRealGraph(numLocations, bounds):
+    """
+    Creates a graph representing 'real' locations: locations that have
+    defined positions and are plottable.
 
-    rng = np.random.default_rng()
+    Parameters
+    ----------
+    numLocations : int
+        Number of locations in graph
+    bounds : np.array
+        Contains upper limits for location coordinates. No limit for number
+        of dimensions but dimensions other than 2 will cause problems
+        plotting
 
-    # create problem graph
-    nodes = 22
-    maxCost = 10
-    directed = True
-    graph = makeGraph(
-        nodes,
-        maxCost,
-        directed
-        )
-    # initialise ga
-    initialPopulation = 100
-    selectionMechanism = 'Roulette'
-    crossoverPoints = 'random'
-    elitism = True
-    mutation = True
-    mutationRate = 0.15
-    tsp = TravellingSalespersonGA(
-        initialPopulation,
-        selectionMechanism,
-        crossoverPoints,
-        elitism,
-        mutation,
-        mutationRate,
-        graph,
-        )
-    # perform evolution
-    generations = 1000
-    earlyStopGenerations = 400
-    tsp.evolve(
-        generations,
-        earlyStopGenerations,
-        )
-    # random benchmark
-    rand = TravellingSalespersonGA(
-        initialPopulation,
-        selectionMechanism,
-        crossoverPoints,
-        elitism,
-        mutation,
-        mutationRate,
-        graph,
-        )
-    # perform random
-    rand.randomBenchmark(generations)
+    Returns
+    -------
+    graph : np.array
+        Weighted adjacency graph representing a travelling salesperson
+        problem. Value at row x and col y represents cost of making journey
+        from location x to location y
+    locationsArray : np.array
+        For each location (axis=0), contains each dimension's coordinates
+        (axis=1). 0 <= coordinate value < bound
+    """
 
-    # results
-    factorial = 1
-    current = 1
-    while current <= nodes:
-        factorial = current * factorial
-        current += 1
-    print(f'Permutations: {(factorial):.1e}')
-    print(f'Max possible solutions evaluated: {(initialPopulation*generations):.1e}')
-
-    # print(tsp.validArrHistory[0])
-    # print(tsp.validArrHistory[-1])
-
-    # print(tsp.pop[np.argmax(tsp.fitArr)])
-
-    benchmarkSolution = np.append(np.arange(nodes), 0)
-    benchmarkFit = tsp.computeFitness(benchmarkSolution)
-
-    # plots
-    fig, axs = plt.subplots(2, 2, figsize=(10,6), sharey=True)
-
-    cmap = matplotlib.colors.ListedColormap(['red', 'blue'])
-
-    tspRows = np.ones_like(tsp.fitArrHistory)
-    for row in range(tsp.fitArrHistory.shape[0]):
-        tspRows[row] *= row
-    axs[0, 0].scatter(
-        tspRows.flatten(),
-        tsp.fitArrHistory.flatten(),
-        s=0.3,
-        c=tsp.validArrHistory.flatten(),
-        cmap=cmap,
-    )
-
-    randRows = np.ones_like(rand.fitArrHistory)
-    for row in range(rand.fitArrHistory.shape[0]):
-        randRows[row] *= row
-    axs[0, 1].scatter(
-        randRows.flatten(),
-        rand.fitArrHistory.flatten(),
-        s=0.3,
-        c=rand.validArrHistory.flatten(),
-        cmap=cmap,
-    )
-    # axs[0].legend()
-
-    axs[1, 0].plot(
-        range(tsp.history.shape[0]),
-        tsp.history[:,0],
-        label='Max')
-    axs[1, 0].plot(
-        range(tsp.history.shape[0]),
-        tsp.history[:,1],
-        label='Mean')
-    axs[1, 0].hlines(
-        benchmarkFit,
-        0,
-        tsp.history.shape[0],
-        linestyles='dashed',
-        colors='k',
-        label='Benchmark')
-
-    # # # = axs[1].twinx()
-    # axs[1, 1].plot(
-    #     range(tsp.history.shape[0]),
-    #     tsp.history[:,2],
-    #     label='Unique solutions %',
-    #     # color='red'
-    #     )
-
-    # axs[1, 1].plot(
-    #     range(tsp.history.shape[0]),
-    #     tsp.history[:,3],
-    #     label='Valid solutions %',
-    #     # color='red'
-    #     )
-
-    # # ax1.plot(x, y1, 'g-')
-    # # ax2.plot(x, y2, 'b-')
-
-    # # ax1.set_xlabel('X data')
-    # # ax1.set_ylabel('Y1 data', color='g')
-    # # ax2.set_ylabel('Y2 data', color='b')
-
-    # axs[1].legend()
-    # axs[2].legend()#loc=(1.01,0.5))
-    plt.show()
+    locationsArray = np.zeros((numLocations, bounds.shape[0]))
+    for dimIdx in range(bounds.shape[0]):
+        # select coordinate values for all locations in each dimension
+        locationsArray[:, dimIdx] = rng.uniform(low=0, high=bounds[dimIdx], size=numLocations)
+    graph = np.zeros((numLocations, numLocations))
+    for rowIdx in range(numLocations):
+        for colIdx in range(rowIdx+1, numLocations):
+            # compute euclidean distance between 2 locations
+            graph[rowIdx, colIdx] =\
+                np.linalg.norm(locationsArray[rowIdx] -\
+                    locationsArray[colIdx])
+    # as distances are based on real locations, graph is undirected
+    graph += graph.T
+    return graph, locationsArray

@@ -64,7 +64,7 @@ class GeneticAlgorithm():
     """
 
     def __init__(self, popSize, selectionMechanism, crossoverPoints,
-    elitism, mutation, mutationRate,):
+    elitism, mutation, mutationRate, permitInvalidSolutions,):
         """
         Initialises 1st generation population and arrays to store history
 
@@ -85,6 +85,8 @@ class GeneticAlgorithm():
             Whether mutation  is used when generating subsequent populations
         mutationRate : float [0 - 1]
             Chance of mutation occuring for each population member
+        permitInvalidSolutions : boolean
+            Indicates whether invalid solutions can exist in population
         """
 
         self.popSize = popSize
@@ -92,6 +94,7 @@ class GeneticAlgorithm():
         self.crossoverPoints = crossoverPoints
         self.elitism = elitism
         self.mutation = mutation
+        self.permitInvalidSolutions = permitInvalidSolutions
         # need to enforce that mutation rate is between 0 and 1
         self.nonMutationRate = 1. - mutationRate
         # used for generating random choices
@@ -193,8 +196,8 @@ class GeneticAlgorithm():
                     self.selectionMechanism](standardisedFitArr)
             # generate 2 children and add them to new population
             newPop.extend(self.performCrossover(
-                self.pop[parentIdx1],
-                self.pop[parentIdx2],
+                self.pop[parentIdx1][:-1],
+                self.pop[parentIdx2][:-1],
                 ))
 
         if self.mutation:
@@ -204,7 +207,7 @@ class GeneticAlgorithm():
                 rand = self.rng.uniform()
                 if rand > self.nonMutationRate:
                     # remove, perform mutation and re-append
-                    solution = newPop.pop(solIdx)
+                    solution = newPop.pop(solIdx)[:-1]
                     mutatedSolution = self.performMutation(solution)
                     newPop.append(mutatedSolution)
 
