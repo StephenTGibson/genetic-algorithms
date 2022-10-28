@@ -329,6 +329,7 @@ def makeGraph(nodes, maxCost, directed=False):
         graph += graph.T
     return graph
 
+
 def makeRealGraph(numLocations, bounds):
     """
     Creates a graph representing 'real' locations: locations that have
